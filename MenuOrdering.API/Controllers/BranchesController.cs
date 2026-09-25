@@ -33,18 +33,7 @@ public class BranchesController : ControllerBase
             .AsNoTracking()
             .AsQueryable();
 
-        // Platform Admin can see all restaurants.
-        if (_tenantContext.IsAdmin)
-        {
-            if (restaurantId.HasValue)
-            {
-                query = query.Where(x =>
-                    x.RestaurantId == restaurantId.Value);
-            }
-        }
-        // Manager can only see branches
-        // belonging to their restaurant.
-        else if (_tenantContext.IsManager)
+        if (_tenantContext.IsManager)
         {
             if (!_tenantContext.RestaurantId.HasValue)
             {
@@ -53,17 +42,11 @@ public class BranchesController : ControllerBase
 
             query = query.Where(x =>
                 x.RestaurantId == _tenantContext.RestaurantId.Value);
-
-            // Manager cannot override the tenant with another restaurantId.
-            if (restaurantId.HasValue &&
-                restaurantId.Value != _tenantContext.RestaurantId.Value)
-            {
-                return Forbid();
-            }
         }
-        else
+        else if (restaurantId.HasValue)
         {
-            return Forbid();
+            query = query.Where(x =>
+                x.RestaurantId == restaurantId.Value);
         }
 
         var branches = await query
@@ -84,26 +67,13 @@ public class BranchesController : ControllerBase
         return Ok(branches);
     }
 
-    // GET: api/Branches/{id}
+    // GET: api/Branches/5
     [HttpGet("{id:int}")]
     public async Task<ActionResult<BranchResponse>> GetBranch(int id)
     {
-        var query = _context.Branches
+        var branch = await _context.Branches
             .AsNoTracking()
-            .Where(x => x.Id == id);
-
-        if (_tenantContext.IsManager)
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
-            {
-                return Forbid();
-            }
-
-            query = query.Where(x =>
-                x.RestaurantId == _tenantContext.RestaurantId.Value);
-        }
-
-        var branch = await query
+            .Where(x => x.Id == id)
             .Select(x => new BranchResponse
             {
                 Id = x.Id,
@@ -125,24 +95,21 @@ public class BranchesController : ControllerBase
             });
         }
 
+        if (!CanAccessRestaurant(branch.RestaurantId))
+        {
+            return Forbid();
+        }
+
         return Ok(branch);
     }
 
     // POST: api/Branches
     [HttpPost]
     public async Task<ActionResult<BranchResponse>> CreateBranch(
-        CreateBranchRequest request)
+        [FromBody] CreateBranchRequest request)
     {
-        if (request == null)
-        {
-            return BadRequest(new
-            {
-                message = "Request is required."
-            });
-        }
+        var restaurantId = request.RestaurantId;
 
-        // Manager can only create a branch
-        // inside their own restaurant.
         if (_tenantContext.IsManager)
         {
             if (!_tenantContext.RestaurantId.HasValue)
@@ -150,16 +117,12 @@ public class BranchesController : ControllerBase
                 return Forbid();
             }
 
-            if (request.RestaurantId !=
-                _tenantContext.RestaurantId.Value)
-            {
-                return Forbid();
-            }
+            restaurantId = _tenantContext.RestaurantId.Value;
         }
 
         var restaurant = await _context.Restaurants
             .FirstOrDefaultAsync(x =>
-                x.Id == request.RestaurantId);
+                x.Id == restaurantId);
 
         if (restaurant == null)
         {
@@ -180,17 +143,9 @@ public class BranchesController : ControllerBase
 
         var name = request.Name.Trim();
 
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return BadRequest(new
-            {
-                message = "Branch name is required."
-            });
-        }
-
         var exists = await _context.Branches
             .AnyAsync(x =>
-                x.RestaurantId == request.RestaurantId &&
+                x.RestaurantId == restaurantId &&
                 x.Name == name);
 
         if (exists)
@@ -204,7 +159,7 @@ public class BranchesController : ControllerBase
 
         var branch = new Branch
         {
-            RestaurantId = request.RestaurantId,
+            RestaurantId = restaurantId,
             Name = name,
             Address = request.Address?.Trim(),
             Phone = request.Phone?.Trim(),
@@ -233,35 +188,13 @@ public class BranchesController : ControllerBase
             response);
     }
 
-    // PUT: api/Branches/{id}
+    // PUT: api/Branches/5
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateBranch(
         int id,
-        UpdateBranchRequest request)
+        [FromBody] UpdateBranchRequest request)
     {
-        if (request == null)
-        {
-            return BadRequest(new
-            {
-                message = "Request is required."
-            });
-        }
-
-        var query = _context.Branches
-            .AsQueryable();
-
-        if (_tenantContext.IsManager)
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
-            {
-                return Forbid();
-            }
-
-            query = query.Where(x =>
-                x.RestaurantId == _tenantContext.RestaurantId.Value);
-        }
-
-        var branch = await query
+        var branch = await _context.Branches
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (branch == null)
@@ -272,15 +205,12 @@ public class BranchesController : ControllerBase
             });
         }
 
-        var name = request.Name.Trim();
-
-        if (string.IsNullOrWhiteSpace(name))
+        if (!CanAccessRestaurant(branch.RestaurantId))
         {
-            return BadRequest(new
-            {
-                message = "Branch name is required."
-            });
+            return Forbid();
         }
+
+        var name = request.Name.Trim();
 
         var duplicate = await _context.Branches
             .AnyAsync(x =>
@@ -307,27 +237,13 @@ public class BranchesController : ControllerBase
         return NoContent();
     }
 
-    // DELETE: api/Branches/{id}
+    // DELETE: api/Branches/5
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteBranch(int id)
     {
-        var query = _context.Branches
+        var branch = await _context.Branches
             .Include(x => x.Tables)
             .Include(x => x.Orders)
-            .AsQueryable();
-
-        if (_tenantContext.IsManager)
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
-            {
-                return Forbid();
-            }
-
-            query = query.Where(x =>
-                x.RestaurantId == _tenantContext.RestaurantId.Value);
-        }
-
-        var branch = await query
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (branch == null)
@@ -336,6 +252,11 @@ public class BranchesController : ControllerBase
             {
                 message = "Branch not found."
             });
+        }
+
+        if (!CanAccessRestaurant(branch.RestaurantId))
+        {
+            return Forbid();
         }
 
         if (branch.Tables.Any())
@@ -361,5 +282,17 @@ public class BranchesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    private bool CanAccessRestaurant(int restaurantId)
+    {
+        if (_tenantContext.IsAdmin)
+        {
+            return true;
+        }
+
+        return _tenantContext.IsManager &&
+               _tenantContext.RestaurantId.HasValue &&
+               _tenantContext.RestaurantId.Value == restaurantId;
     }
 }
