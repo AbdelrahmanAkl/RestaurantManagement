@@ -59,6 +59,36 @@ public class OrdersController : ControllerBase
         return Ok(MapToResponse(order));
     }
 
+    // GET: api/Orders/1/status
+    // Used by the customer to track ONE specific order.
+    [HttpGet("{id:int}/status")]
+    public async Task<IActionResult> GetOrderStatus(int id)
+    {
+        var order = await _context.Orders
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new
+            {
+                orderId = x.Id,
+                tableId = x.TableId,
+                tableNumber = x.Table.TableNumber,
+                status = x.Status.ToString(),
+                createdAt = x.CreatedAt,
+                completedAt = x.CompletedAt
+            })
+            .FirstOrDefaultAsync();
+
+        if (order == null)
+        {
+            return NotFound(new
+            {
+                message = "Order not found."
+            });
+        }
+
+        return Ok(order);
+    }
+
     // GET: api/Orders/table/1
     [HttpGet("table/{tableId:int}")]
     public async Task<ActionResult<IEnumerable<OrderResponse>>> GetOrdersByTable(
@@ -90,7 +120,7 @@ public class OrdersController : ControllerBase
     // POST: api/Orders
     [HttpPost]
     public async Task<ActionResult<OrderResponse>> CreateOrder(
-        CreateOrderRequest request)
+        [FromBody] CreateOrderRequest request)
     {
         var table = await _context.RestaurantTables
             .FirstOrDefaultAsync(x =>
@@ -110,6 +140,21 @@ public class OrdersController : ControllerBase
             return BadRequest(new
             {
                 message = "An order must contain at least one item."
+            });
+        }
+
+        var invalidQuantityItems = request.Items
+            .Where(x => x.Quantity <= 0)
+            .Select(x => x.MenuItemId)
+            .Distinct()
+            .ToList();
+
+        if (invalidQuantityItems.Count > 0)
+        {
+            return BadRequest(new
+            {
+                message = "Order item quantity must be greater than zero.",
+                menuItemIds = invalidQuantityItems
             });
         }
 
@@ -242,20 +287,20 @@ public class OrdersController : ControllerBase
             });
         }
 
+        if (!Enum.IsDefined(typeof(OrderStatus), status))
+        {
+            return BadRequest(new
+            {
+                message = "Invalid order status."
+            });
+        }
+
         if (order.Status == OrderStatus.Completed ||
             order.Status == OrderStatus.Cancelled)
         {
             return BadRequest(new
             {
                 message = "Completed or cancelled orders cannot be updated."
-            });
-        }
-
-        if (!Enum.IsDefined(typeof(OrderStatus), status))
-        {
-            return BadRequest(new
-            {
-                message = "Invalid order status."
             });
         }
 

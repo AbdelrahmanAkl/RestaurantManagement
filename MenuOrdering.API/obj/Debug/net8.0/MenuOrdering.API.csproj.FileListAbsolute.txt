@@ -142,3 +142,5 @@ C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\refint\M
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.pdb
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.genruntimeconfig.cache
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\ref\MenuOrdering.API.dll
+C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.sourcelink.json
+C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll

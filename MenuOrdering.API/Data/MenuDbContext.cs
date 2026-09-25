@@ -9,6 +9,8 @@ public class MenuDbContext : DbContext
         : base(options)
     {
     }
+public DbSet<User> Users { get; set; }
+
 
     public DbSet<RestaurantTable> RestaurantTables => Set<RestaurantTable>();
 
@@ -23,6 +25,7 @@ public class MenuDbContext : DbContext
     public DbSet<Bill> Bills => Set<Bill>();
 
     public DbSet<Payment> Payments => Set<Payment>();
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
