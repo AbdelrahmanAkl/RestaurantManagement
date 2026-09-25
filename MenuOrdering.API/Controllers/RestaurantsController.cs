@@ -1,6 +1,8 @@
+using MenuOrdering.API.Authorization;
 using MenuOrdering.API.Data;
 using MenuOrdering.API.DTOs.Restaurants;
 using MenuOrdering.API.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,21 +10,40 @@ namespace MenuOrdering.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class RestaurantsController : ControllerBase
 {
     private readonly MenuDbContext _context;
+    private readonly TenantContext _tenantContext;
 
-    public RestaurantsController(MenuDbContext context)
+    public RestaurantsController(
+        MenuDbContext context,
+        TenantContext tenantContext)
     {
         _context = context;
+        _tenantContext = tenantContext;
     }
 
-    // GET: api/restaurants
     [HttpGet]
     public async Task<ActionResult<IEnumerable<RestaurantResponse>>> GetRestaurants()
     {
-        var restaurants = await _context.Restaurants
+        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+            return Forbid();
+
+        var query = _context.Restaurants
             .AsNoTracking()
+            .AsQueryable();
+
+        if (_tenantContext.IsManager)
+        {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
+
+            query = query.Where(x =>
+                x.Id == _tenantContext.RestaurantId.Value);
+        }
+
+        var restaurants = await query
             .OrderBy(x => x.Name)
             .Select(x => new RestaurantResponse
             {
@@ -40,10 +61,19 @@ public class RestaurantsController : ControllerBase
         return Ok(restaurants);
     }
 
-    // GET: api/restaurants/1
     [HttpGet("{id:int}")]
     public async Task<ActionResult<RestaurantResponse>> GetRestaurant(int id)
     {
+        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+            return Forbid();
+
+        if (_tenantContext.IsManager &&
+            (!_tenantContext.RestaurantId.HasValue ||
+             _tenantContext.RestaurantId.Value != id))
+        {
+            return Forbid();
+        }
+
         var restaurant = await _context.Restaurants
             .AsNoTracking()
             .Where(x => x.Id == id)
@@ -71,11 +101,13 @@ public class RestaurantsController : ControllerBase
         return Ok(restaurant);
     }
 
-    // POST: api/restaurants
     [HttpPost]
     public async Task<ActionResult<RestaurantResponse>> CreateRestaurant(
         CreateRestaurantRequest request)
     {
+        if (!_tenantContext.IsAdmin)
+            return Forbid();
+
         var name = request.Name.Trim();
 
         var exists = await _context.Restaurants
@@ -118,12 +150,21 @@ public class RestaurantsController : ControllerBase
             });
     }
 
-    // PUT: api/restaurants/1
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateRestaurant(
         int id,
         UpdateRestaurantRequest request)
     {
+        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+            return Forbid();
+
+        if (_tenantContext.IsManager &&
+            (!_tenantContext.RestaurantId.HasValue ||
+             _tenantContext.RestaurantId.Value != id))
+        {
+            return Forbid();
+        }
+
         var restaurant = await _context.Restaurants
             .FirstOrDefaultAsync(x => x.Id == id);
 
@@ -161,10 +202,12 @@ public class RestaurantsController : ControllerBase
         return NoContent();
     }
 
-    // DELETE: api/restaurants/1
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteRestaurant(int id)
     {
+        if (!_tenantContext.IsAdmin)
+            return Forbid();
+
         var restaurant = await _context.Restaurants
             .Include(x => x.Branches)
             .Include(x => x.Categories)
@@ -183,7 +226,8 @@ public class RestaurantsController : ControllerBase
         {
             return Conflict(new
             {
-                message = "Cannot delete a restaurant that has branches or categories."
+                message =
+                    "Cannot delete a restaurant that has branches or categories."
             });
         }
 
@@ -192,5 +236,21 @@ public class RestaurantsController : ControllerBase
         await _context.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    [HttpGet("debug")]
+    public IActionResult Debug()
+    {
+        return Ok(new
+        {
+            userId = _tenantContext.UserId,
+            role = _tenantContext.Role,
+            restaurantId = _tenantContext.RestaurantId,
+            branchId = _tenantContext.BranchId,
+            isAdmin = _tenantContext.IsAdmin,
+            isManager = _tenantContext.IsManager,
+            isWaiter = _tenantContext.IsWaiter,
+            isKitchen = _tenantContext.IsKitchen
+        });
     }
 }
