@@ -6,6 +6,8 @@ public class Order
 {
     public int Id { get; set; }
 
+    public int BranchId { get; set; }
+
     public int TableId { get; set; }
 
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
@@ -20,11 +22,15 @@ public class Order
 
     public DateTime? CompletedAt { get; set; }
 
+    public Branch Branch { get; set; } = null!;
+
     public RestaurantTable Table { get; set; } = null!;
 
-    public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
+    public ICollection<OrderItem> OrderItems { get; set; } =
+        new List<OrderItem>();
 
     public Bill? Bill { get; set; }
 
-    public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    public ICollection<Payment> Payments { get; set; } =
+        new List<Payment>();
 }
