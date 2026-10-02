@@ -8,6 +8,7 @@ C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\MenuOrde
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Azure.Core.dll
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Azure.Identity.dll
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Humanizer.dll
+C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.AspNetCore.OpenApi.dll
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.Bcl.AsyncInterfaces.dll
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.CodeAnalysis.dll
@@ -128,6 +129,7 @@ C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrde
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.csproj.CoreCompileInputs.cache
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.MvcApplicationPartsAssemblyInfo.cs
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.sourcelink.json
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\staticwebassets.build.json
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\staticwebassets.development.json
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\staticwebassets\msbuild.MenuOrdering.API.Microsoft.AspNetCore.StaticWebAssets.props
@@ -142,5 +144,3 @@ C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\refint\M
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.pdb
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.genruntimeconfig.cache
 C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\ref\MenuOrdering.API.dll
-C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\obj\Debug\net8.0\MenuOrdering.API.sourcelink.json
-C:\Users\Abdelrahman Akl\MenuOrdering\MenuOrdering.API\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll

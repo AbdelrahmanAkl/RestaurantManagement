@@ -2,8 +2,11 @@ namespace MenuOrdering.API.Enums;
 
 public enum UserRole
 {
-Admin = 1,
-Manager = 2,
-Waiter = 3,
-Kitchen = 4
+    SuperAdmin = 1,
+    Admin = 2,
+    RestaurantManager = 3,
+    BranchManager = 4,
+    Waiter = 5,
+    Kitchen = 6,
+    Cashier = 7
 }

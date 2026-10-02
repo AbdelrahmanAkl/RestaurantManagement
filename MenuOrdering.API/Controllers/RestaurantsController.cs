@@ -27,20 +27,20 @@ public class RestaurantsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<RestaurantResponse>>> GetRestaurants()
     {
-        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.RestaurantId.HasValue)
+        {
             return Forbid();
+        }
 
         var query = _context.Restaurants
             .AsNoTracking()
             .AsQueryable();
 
-        if (_tenantContext.IsManager)
+        if (!_tenantContext.IsSuperAdmin)
         {
-            if (!_tenantContext.RestaurantId.HasValue)
-                return Forbid();
-
             query = query.Where(x =>
-                x.Id == _tenantContext.RestaurantId.Value);
+                x.Id == _tenantContext.RestaurantId!.Value);
         }
 
         var restaurants = await query
@@ -64,15 +64,8 @@ public class RestaurantsController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<RestaurantResponse>> GetRestaurant(int id)
     {
-        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+        if (!_tenantContext.CanAccessRestaurant(id))
             return Forbid();
-
-        if (_tenantContext.IsManager &&
-            (!_tenantContext.RestaurantId.HasValue ||
-             _tenantContext.RestaurantId.Value != id))
-        {
-            return Forbid();
-        }
 
         var restaurant = await _context.Restaurants
             .AsNoTracking()
@@ -105,7 +98,7 @@ public class RestaurantsController : ControllerBase
     public async Task<ActionResult<RestaurantResponse>> CreateRestaurant(
         CreateRestaurantRequest request)
     {
-        if (!_tenantContext.IsAdmin)
+        if (!_tenantContext.IsSuperAdmin)
             return Forbid();
 
         var name = request.Name.Trim();
@@ -126,12 +119,11 @@ public class RestaurantsController : ControllerBase
             Name = name,
             Description = request.Description?.Trim(),
             Phone = request.Phone?.Trim(),
-            Email = request.Email?.Trim().ToLower(),
+            Email = request.Email?.Trim().ToLowerInvariant(),
             IsActive = request.IsActive
         };
 
         _context.Restaurants.Add(restaurant);
-
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(
@@ -155,12 +147,12 @@ public class RestaurantsController : ControllerBase
         int id,
         UpdateRestaurantRequest request)
     {
-        if (!_tenantContext.IsAdmin && !_tenantContext.IsManager)
+        if (!_tenantContext.CanAccessRestaurant(id))
             return Forbid();
 
-        if (_tenantContext.IsManager &&
-            (!_tenantContext.RestaurantId.HasValue ||
-             _tenantContext.RestaurantId.Value != id))
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.IsAdmin &&
+            !_tenantContext.IsRestaurantManager)
         {
             return Forbid();
         }
@@ -194,7 +186,7 @@ public class RestaurantsController : ControllerBase
         restaurant.Name = name;
         restaurant.Description = request.Description?.Trim();
         restaurant.Phone = request.Phone?.Trim();
-        restaurant.Email = request.Email?.Trim().ToLower();
+        restaurant.Email = request.Email?.Trim().ToLowerInvariant();
         restaurant.IsActive = request.IsActive;
 
         await _context.SaveChangesAsync();
@@ -205,8 +197,14 @@ public class RestaurantsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteRestaurant(int id)
     {
-        if (!_tenantContext.IsAdmin)
+        if (!_tenantContext.CanAccessRestaurant(id))
             return Forbid();
+
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.IsAdmin)
+        {
+            return Forbid();
+        }
 
         var restaurant = await _context.Restaurants
             .Include(x => x.Branches)
@@ -232,7 +230,6 @@ public class RestaurantsController : ControllerBase
         }
 
         _context.Restaurants.Remove(restaurant);
-
         await _context.SaveChangesAsync();
 
         return NoContent();
@@ -247,10 +244,13 @@ public class RestaurantsController : ControllerBase
             role = _tenantContext.Role,
             restaurantId = _tenantContext.RestaurantId,
             branchId = _tenantContext.BranchId,
+            isSuperAdmin = _tenantContext.IsSuperAdmin,
             isAdmin = _tenantContext.IsAdmin,
-            isManager = _tenantContext.IsManager,
+            isRestaurantManager = _tenantContext.IsRestaurantManager,
+            isBranchManager = _tenantContext.IsBranchManager,
             isWaiter = _tenantContext.IsWaiter,
-            isKitchen = _tenantContext.IsKitchen
+            isKitchen = _tenantContext.IsKitchen,
+            isCashier = _tenantContext.IsCashier
         });
     }
 }

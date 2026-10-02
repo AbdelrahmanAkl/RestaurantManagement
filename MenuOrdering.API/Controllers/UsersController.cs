@@ -12,7 +12,7 @@ namespace MenuOrdering.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin,Manager")]
+[Authorize]
 public class UsersController : ControllerBase
 {
     private readonly MenuDbContext _context;
@@ -28,7 +28,6 @@ public class UsersController : ControllerBase
         _tenantContext = tenantContext;
     }
 
-    // GET: api/Users
     [HttpGet]
     public async Task<ActionResult<IEnumerable<UserResponse>>> GetUsers()
     {
@@ -38,17 +37,26 @@ public class UsersController : ControllerBase
             .Include(x => x.Branch)
             .AsQueryable();
 
-        if (_tenantContext.IsManager)
+        if (_tenantContext.IsSuperAdmin)
         {
-            if (!_tenantContext.RestaurantId.HasValue)
-            {
+        }
+        else if (_tenantContext.IsBranchScoped)
+        {
+            if (!_tenantContext.BranchId.HasValue ||
+                !_tenantContext.RestaurantId.HasValue)
                 return Forbid();
-            }
 
             query = query.Where(x =>
                 x.RestaurantId == _tenantContext.RestaurantId.Value &&
-                (x.Role == UserRole.Waiter ||
-                 x.Role == UserRole.Kitchen));
+                x.BranchId == _tenantContext.BranchId.Value);
+        }
+        else
+        {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
+
+            query = query.Where(x =>
+                x.RestaurantId == _tenantContext.RestaurantId.Value);
         }
 
         var users = await query
@@ -75,7 +83,6 @@ public class UsersController : ControllerBase
         return Ok(users);
     }
 
-    // GET: api/Users/5
     [HttpGet("{id:int}")]
     public async Task<ActionResult<UserResponse>> GetUser(int id)
     {
@@ -86,107 +93,75 @@ public class UsersController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (user == null)
-        {
-            return NotFound(new
-            {
-                message = "User not found."
-            });
-        }
+            return NotFound(new { message = "User not found." });
 
         if (!CanManageUser(user))
-        {
             return Forbid();
-        }
 
         return Ok(ToResponse(user));
     }
 
-    // POST: api/Users
     [HttpPost]
     public async Task<ActionResult<UserResponse>> CreateUser(
         [FromBody] CreateUserRequest request)
     {
         if (!Enum.IsDefined(request.Role))
-        {
-            return BadRequest(new
-            {
-                message = "Invalid user role."
-            });
-        }
+            return BadRequest(new { message = "Invalid user role." });
 
-        if (_tenantContext.IsManager &&
-            request.Role != UserRole.Waiter &&
-            request.Role != UserRole.Kitchen)
-        {
-            return BadRequest(new
-            {
-                message = "Managers can only create Waiter and Kitchen users."
-            });
-        }
+        if (!CanCreateRole(request.Role))
+            return Forbid();
 
         var restaurantId = request.RestaurantId;
         var branchId = request.BranchId;
 
-        if (_tenantContext.IsManager)
+        if (_tenantContext.IsSuperAdmin)
         {
-            restaurantId = _tenantContext.RestaurantId;
         }
-
-        if (request.Role == UserRole.Admin)
+        else if (_tenantContext.IsAdmin)
         {
-            restaurantId = null;
-            branchId = null;
-        }
-        else if (request.Role == UserRole.Manager)
-        {
-            branchId = null;
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
 
-            if (!restaurantId.HasValue)
+            restaurantId = _tenantContext.RestaurantId.Value;
+
+            if (request.Role == UserRole.Admin ||
+                request.Role == UserRole.RestaurantManager)
             {
-                return BadRequest(new
-                {
-                    message = "RestaurantId is required for a Manager."
-                });
+                branchId = null;
             }
+        }
+        else if (_tenantContext.IsRestaurantManager)
+        {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
+
+            restaurantId = _tenantContext.RestaurantId.Value;
+        }
+        else if (_tenantContext.IsBranchManager)
+        {
+            if (!_tenantContext.RestaurantId.HasValue ||
+                !_tenantContext.BranchId.HasValue)
+                return Forbid();
+
+            restaurantId = _tenantContext.RestaurantId.Value;
+            branchId = _tenantContext.BranchId.Value;
         }
         else
         {
-            if (!restaurantId.HasValue)
-            {
-                return BadRequest(new
-                {
-                    message = "RestaurantId is required."
-                });
-            }
-
-            if (!branchId.HasValue)
-            {
-                return BadRequest(new
-                {
-                    message = "BranchId is required for Waiter and Kitchen users."
-                });
-            }
+            return Forbid();
         }
 
-        var validationResult = await ValidateRestaurantAndBranch(
+        var validation = await ValidateRestaurantAndBranch(
+            request.Role,
             restaurantId,
-            branchId,
-            request.Role);
+            branchId);
 
-        if (validationResult != null)
-        {
-            return BadRequest(new
-            {
-                message = validationResult
-            });
-        }
+        if (validation != null)
+            return BadRequest(new { message = validation });
 
         var email = request.Email.Trim().ToLowerInvariant();
 
-        var existingUser = await _context.Users
-            .FirstOrDefaultAsync(x => x.Email == email);
-
-        if (existingUser != null)
+        if (await _context.Users.AnyAsync(x => x.Email == email))
         {
             return Conflict(new
             {
@@ -210,7 +185,6 @@ public class UsersController : ControllerBase
             request.Password);
 
         _context.Users.Add(user);
-
         await _context.SaveChangesAsync();
 
         await _context.Entry(user)
@@ -227,7 +201,6 @@ public class UsersController : ControllerBase
             ToResponse(user));
     }
 
-    // PUT: api/Users/5
     [HttpPut("{id:int}")]
     public async Task<ActionResult<UserResponse>> UpdateUser(
         int id,
@@ -239,93 +212,61 @@ public class UsersController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (user == null)
-        {
-            return NotFound(new
-            {
-                message = "User not found."
-            });
-        }
+            return NotFound(new { message = "User not found." });
 
         if (!CanManageUser(user))
-        {
             return Forbid();
-        }
 
         if (!Enum.IsDefined(request.Role))
-        {
-            return BadRequest(new
-            {
-                message = "Invalid user role."
-            });
-        }
+            return BadRequest(new { message = "Invalid user role." });
 
-        if (_tenantContext.IsManager &&
-            request.Role != UserRole.Waiter &&
-            request.Role != UserRole.Kitchen)
-        {
-            return BadRequest(new
-            {
-                message = "Managers can only manage Waiter and Kitchen users."
-            });
-        }
+        if (!CanCreateRole(request.Role))
+            return Forbid();
 
         var restaurantId = request.RestaurantId;
         var branchId = request.BranchId;
 
-        if (_tenantContext.IsManager)
+        if (_tenantContext.IsSuperAdmin)
         {
-            restaurantId = _tenantContext.RestaurantId;
         }
+        else if (_tenantContext.IsAdmin ||
+                 _tenantContext.IsRestaurantManager)
+        {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
 
-        if (request.Role == UserRole.Admin)
-        {
-            restaurantId = null;
-            branchId = null;
+            restaurantId = _tenantContext.RestaurantId.Value;
         }
-        else if (request.Role == UserRole.Manager)
+        else if (_tenantContext.IsBranchManager)
         {
-            branchId = null;
+            if (!IsBranchRole(request.Role))
+                return Forbid();
+
+            if (!_tenantContext.RestaurantId.HasValue ||
+                !_tenantContext.BranchId.HasValue)
+                return Forbid();
+
+            restaurantId = _tenantContext.RestaurantId.Value;
+            branchId = _tenantContext.BranchId.Value;
         }
         else
         {
-            if (!restaurantId.HasValue)
-            {
-                return BadRequest(new
-                {
-                    message = "RestaurantId is required."
-                });
-            }
-
-            if (!branchId.HasValue)
-            {
-                return BadRequest(new
-                {
-                    message = "BranchId is required for Waiter and Kitchen users."
-                });
-            }
+            return Forbid();
         }
 
-        var validationResult = await ValidateRestaurantAndBranch(
+        var validation = await ValidateRestaurantAndBranch(
+            request.Role,
             restaurantId,
-            branchId,
-            request.Role);
+            branchId);
 
-        if (validationResult != null)
-        {
-            return BadRequest(new
-            {
-                message = validationResult
-            });
-        }
+        if (validation != null)
+            return BadRequest(new { message = validation });
 
         var email = request.Email.Trim().ToLowerInvariant();
 
-        var emailUsedByAnotherUser = await _context.Users
-            .AnyAsync(x =>
+        if (await _context.Users.AnyAsync(x =>
                 x.Email == email &&
-                x.Id != id);
-
-        if (emailUsedByAnotherUser)
+                x.Id != id))
         {
             return Conflict(new
             {
@@ -353,70 +294,69 @@ public class UsersController : ControllerBase
         return Ok(ToResponse(user));
     }
 
-    // PUT: api/Users/5/role
     [HttpPut("{id:int}/role")]
-    public async Task<ActionResult> ChangeRole(
+    public async Task<IActionResult> ChangeRole(
         int id,
         [FromBody] UserRole role)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .FirstOrDefaultAsync(x => x.Id == id);
 
         if (user == null)
-        {
-            return NotFound(new
-            {
-                message = "User not found."
-            });
-        }
+            return NotFound(new { message = "User not found." });
 
         if (!CanManageUser(user))
+            return Forbid();
+
+        if (!Enum.IsDefined(role))
+            return BadRequest(new { message = "Invalid user role." });
+
+        if (!CanCreateRole(role))
+            return Forbid();
+
+        var restaurantId = user.RestaurantId;
+        var branchId = user.BranchId;
+
+        if (_tenantContext.IsSuperAdmin)
+        {
+            if (role == UserRole.SuperAdmin)
+            {
+                restaurantId = null;
+                branchId = null;
+            }
+        }
+        else if (_tenantContext.IsAdmin ||
+                 _tenantContext.IsRestaurantManager)
+        {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
+
+            restaurantId = _tenantContext.RestaurantId.Value;
+        }
+        else if (_tenantContext.IsBranchManager)
+        {
+            if (!IsBranchRole(role))
+                return Forbid();
+
+            restaurantId = _tenantContext.RestaurantId;
+            branchId = _tenantContext.BranchId;
+        }
+        else
         {
             return Forbid();
         }
 
-        if (!Enum.IsDefined(role))
-        {
-            return BadRequest(new
-            {
-                message = "Invalid user role."
-            });
-        }
+        var validation = await ValidateRestaurantAndBranch(
+            role,
+            restaurantId,
+            branchId);
 
-        if (_tenantContext.IsManager &&
-            role != UserRole.Waiter &&
-            role != UserRole.Kitchen)
-        {
-            return BadRequest(new
-            {
-                message = "Managers can only assign Waiter and Kitchen roles."
-            });
-        }
-
-        if (role == UserRole.Waiter ||
-            role == UserRole.Kitchen)
-        {
-            if (!user.RestaurantId.HasValue ||
-                !user.BranchId.HasValue)
-            {
-                return BadRequest(new
-                {
-                    message = "Waiter and Kitchen users must have a restaurant and branch."
-                });
-            }
-        }
-
-        if (role == UserRole.Manager)
-        {
-            user.BranchId = null;
-        }
-
-        if (role == UserRole.Admin)
-        {
-            user.RestaurantId = null;
-            user.BranchId = null;
-        }
+        if (validation != null)
+            return BadRequest(new { message = validation });
 
         user.Role = role;
+        user.RestaurantId = restaurantId;
+        user.BranchId = branchId;
 
         await _context.SaveChangesAsync();
 
@@ -430,29 +370,21 @@ public class UsersController : ControllerBase
         });
     }
 
-    // PUT: api/Users/5/status
     [HttpPut("{id:int}/status")]
-    public async Task<ActionResult> ChangeStatus(
+    public async Task<IActionResult> ChangeStatus(
         int id,
         [FromBody] bool isActive)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .FirstOrDefaultAsync(x => x.Id == id);
 
         if (user == null)
-        {
-            return NotFound(new
-            {
-                message = "User not found."
-            });
-        }
+            return NotFound(new { message = "User not found." });
 
         if (!CanManageUser(user))
-        {
             return Forbid();
-        }
 
         user.IsActive = isActive;
-
         await _context.SaveChangesAsync();
 
         return Ok(new
@@ -463,24 +395,17 @@ public class UsersController : ControllerBase
         });
     }
 
-    // DELETE: api/Users/5
     [HttpDelete("{id:int}")]
-    public async Task<ActionResult> DeleteUser(int id)
+    public async Task<IActionResult> DeleteUser(int id)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .FirstOrDefaultAsync(x => x.Id == id);
 
         if (user == null)
-        {
-            return NotFound(new
-            {
-                message = "User not found."
-            });
-        }
+            return NotFound(new { message = "User not found." });
 
         if (!CanManageUser(user))
-        {
             return Forbid();
-        }
 
         if (_tenantContext.UserId == user.Id)
         {
@@ -491,7 +416,6 @@ public class UsersController : ControllerBase
         }
 
         _context.Users.Remove(user);
-
         await _context.SaveChangesAsync();
 
         return Ok(new
@@ -501,38 +425,91 @@ public class UsersController : ControllerBase
         });
     }
 
-    private bool CanManageUser(User user)
+    private bool CanCreateRole(UserRole role)
     {
+        if (_tenantContext.IsSuperAdmin)
+            return true;
+
         if (_tenantContext.IsAdmin)
         {
-            return true;
+            return role != UserRole.SuperAdmin;
         }
 
-        if (_tenantContext.IsManager)
+        if (_tenantContext.IsRestaurantManager)
         {
-            return _tenantContext.RestaurantId.HasValue &&
-                   user.RestaurantId == _tenantContext.RestaurantId.Value &&
-                   (user.Role == UserRole.Waiter ||
-                    user.Role == UserRole.Kitchen);
+            return role == UserRole.BranchManager ||
+                   role == UserRole.Waiter ||
+                   role == UserRole.Kitchen ||
+                   role == UserRole.Cashier;
+        }
+
+        if (_tenantContext.IsBranchManager)
+        {
+            return role == UserRole.Waiter ||
+                   role == UserRole.Kitchen ||
+                   role == UserRole.Cashier;
         }
 
         return false;
     }
 
-    private async Task<string?> ValidateRestaurantAndBranch(
-        int? restaurantId,
-        int? branchId,
-        UserRole role)
+    private bool CanManageUser(User user)
     {
-        if (role == UserRole.Admin)
+        if (_tenantContext.IsSuperAdmin)
+            return true;
+
+        if (!_tenantContext.RestaurantId.HasValue)
+            return false;
+
+        if (user.RestaurantId != _tenantContext.RestaurantId.Value)
+            return false;
+
+        if (_tenantContext.IsAdmin)
         {
+            return user.Role != UserRole.SuperAdmin;
+        }
+
+        if (_tenantContext.IsRestaurantManager)
+        {
+            return user.Role == UserRole.BranchManager ||
+                   user.Role == UserRole.Waiter ||
+                   user.Role == UserRole.Kitchen ||
+                   user.Role == UserRole.Cashier;
+        }
+
+        if (_tenantContext.IsBranchManager)
+        {
+            return user.BranchId == _tenantContext.BranchId &&
+                   (user.Role == UserRole.Waiter ||
+                    user.Role == UserRole.Kitchen ||
+                    user.Role == UserRole.Cashier);
+        }
+
+        return false;
+    }
+
+    private static bool IsBranchRole(UserRole role)
+    {
+        return role == UserRole.Waiter ||
+               role == UserRole.Kitchen ||
+               role == UserRole.Cashier;
+    }
+
+    private async Task<string?> ValidateRestaurantAndBranch(
+        UserRole role,
+        int? restaurantId,
+        int? branchId)
+    {
+        if (role == UserRole.SuperAdmin)
+        {
+            if (restaurantId.HasValue || branchId.HasValue)
+                return "SuperAdmin must not be assigned to a restaurant or branch.";
+
             return null;
         }
 
         if (!restaurantId.HasValue)
-        {
-            return "RestaurantId is required.";
-        }
+            return "RestaurantId is required for this role.";
 
         var restaurantExists = await _context.Restaurants
             .AnyAsync(x =>
@@ -540,19 +517,19 @@ public class UsersController : ControllerBase
                 x.IsActive);
 
         if (!restaurantExists)
-        {
             return "Restaurant not found or inactive.";
-        }
 
-        if (role == UserRole.Manager)
+        if (role == UserRole.Admin ||
+            role == UserRole.RestaurantManager)
         {
+            if (branchId.HasValue)
+                return "This role must not be assigned to a branch.";
+
             return null;
         }
 
         if (!branchId.HasValue)
-        {
-            return "BranchId is required for Waiter and Kitchen users.";
-        }
+            return "BranchId is required for this role.";
 
         var branchExists = await _context.Branches
             .AnyAsync(x =>

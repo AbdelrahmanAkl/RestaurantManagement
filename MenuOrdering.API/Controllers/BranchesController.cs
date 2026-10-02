@@ -10,7 +10,7 @@ namespace MenuOrdering.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin,Manager")]
+[Authorize]
 public class BranchesController : ControllerBase
 {
     private readonly MenuDbContext _context;
@@ -24,7 +24,6 @@ public class BranchesController : ControllerBase
         _tenantContext = tenantContext;
     }
 
-    // GET: api/Branches
     [HttpGet]
     public async Task<ActionResult<IEnumerable<BranchResponse>>> GetBranches(
         [FromQuery] int? restaurantId)
@@ -33,20 +32,33 @@ public class BranchesController : ControllerBase
             .AsNoTracking()
             .AsQueryable();
 
-        if (_tenantContext.IsManager)
+        if (_tenantContext.IsSuperAdmin)
         {
-            if (!_tenantContext.RestaurantId.HasValue)
+            if (restaurantId.HasValue)
+            {
+                query = query.Where(x =>
+                    x.RestaurantId == restaurantId.Value);
+            }
+        }
+        else if (_tenantContext.IsBranchScoped)
+        {
+            if (!_tenantContext.BranchId.HasValue ||
+                !_tenantContext.RestaurantId.HasValue)
             {
                 return Forbid();
             }
 
             query = query.Where(x =>
+                x.Id == _tenantContext.BranchId.Value &&
                 x.RestaurantId == _tenantContext.RestaurantId.Value);
         }
-        else if (restaurantId.HasValue)
+        else
         {
+            if (!_tenantContext.RestaurantId.HasValue)
+                return Forbid();
+
             query = query.Where(x =>
-                x.RestaurantId == restaurantId.Value);
+                x.RestaurantId == _tenantContext.RestaurantId.Value);
         }
 
         var branches = await query
@@ -67,7 +79,6 @@ public class BranchesController : ControllerBase
         return Ok(branches);
     }
 
-    // GET: api/Branches/5
     [HttpGet("{id:int}")]
     public async Task<ActionResult<BranchResponse>> GetBranch(int id)
     {
@@ -88,14 +99,11 @@ public class BranchesController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (branch == null)
-        {
-            return NotFound(new
-            {
-                message = "Branch not found."
-            });
-        }
+            return NotFound(new { message = "Branch not found." });
 
-        if (!CanAccessRestaurant(branch.RestaurantId))
+        if (!_tenantContext.CanAccessBranch(
+                branch.Id,
+                branch.RestaurantId))
         {
             return Forbid();
         }
@@ -103,41 +111,37 @@ public class BranchesController : ControllerBase
         return Ok(branch);
     }
 
-    // POST: api/Branches
     [HttpPost]
     public async Task<ActionResult<BranchResponse>> CreateBranch(
         [FromBody] CreateBranchRequest request)
     {
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.IsAdmin &&
+            !_tenantContext.IsRestaurantManager)
+        {
+            return Forbid();
+        }
+
         var restaurantId = request.RestaurantId;
 
-        if (_tenantContext.IsManager)
+        if (!_tenantContext.IsSuperAdmin)
         {
             if (!_tenantContext.RestaurantId.HasValue)
-            {
                 return Forbid();
-            }
 
             restaurantId = _tenantContext.RestaurantId.Value;
         }
 
         var restaurant = await _context.Restaurants
             .FirstOrDefaultAsync(x =>
-                x.Id == restaurantId);
+                x.Id == restaurantId &&
+                x.IsActive);
 
         if (restaurant == null)
         {
             return BadRequest(new
             {
-                message = "Restaurant not found."
-            });
-        }
-
-        if (!restaurant.IsActive)
-        {
-            return BadRequest(new
-            {
-                message =
-                    "Cannot create a branch for an inactive restaurant."
+                message = "Restaurant not found or inactive."
             });
         }
 
@@ -167,28 +171,24 @@ public class BranchesController : ControllerBase
         };
 
         _context.Branches.Add(branch);
-
         await _context.SaveChangesAsync();
-
-        var response = new BranchResponse
-        {
-            Id = branch.Id,
-            RestaurantId = branch.RestaurantId,
-            RestaurantName = restaurant.Name,
-            Name = branch.Name,
-            Address = branch.Address,
-            Phone = branch.Phone,
-            IsActive = branch.IsActive,
-            TableCount = 0
-        };
 
         return CreatedAtAction(
             nameof(GetBranch),
             new { id = branch.Id },
-            response);
+            new BranchResponse
+            {
+                Id = branch.Id,
+                RestaurantId = branch.RestaurantId,
+                RestaurantName = restaurant.Name,
+                Name = branch.Name,
+                Address = branch.Address,
+                Phone = branch.Phone,
+                IsActive = branch.IsActive,
+                TableCount = 0
+            });
     }
 
-    // PUT: api/Branches/5
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateBranch(
         int id,
@@ -198,14 +198,19 @@ public class BranchesController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (branch == null)
+            return NotFound(new { message = "Branch not found." });
+
+        if (!_tenantContext.CanAccessBranch(
+                branch.Id,
+                branch.RestaurantId))
         {
-            return NotFound(new
-            {
-                message = "Branch not found."
-            });
+            return Forbid();
         }
 
-        if (!CanAccessRestaurant(branch.RestaurantId))
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.IsAdmin &&
+            !_tenantContext.IsRestaurantManager &&
+            !_tenantContext.IsBranchManager)
         {
             return Forbid();
         }
@@ -222,8 +227,7 @@ public class BranchesController : ControllerBase
         {
             return Conflict(new
             {
-                message =
-                    "Another branch with this name already exists."
+                message = "Another branch with this name already exists."
             });
         }
 
@@ -233,11 +237,9 @@ public class BranchesController : ControllerBase
         branch.IsActive = request.IsActive;
 
         await _context.SaveChangesAsync();
-
         return NoContent();
     }
 
-    // DELETE: api/Branches/5
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteBranch(int id)
     {
@@ -247,14 +249,18 @@ public class BranchesController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (branch == null)
+            return NotFound(new { message = "Branch not found." });
+
+        if (!_tenantContext.CanAccessBranch(
+                branch.Id,
+                branch.RestaurantId))
         {
-            return NotFound(new
-            {
-                message = "Branch not found."
-            });
+            return Forbid();
         }
 
-        if (!CanAccessRestaurant(branch.RestaurantId))
+        if (!_tenantContext.IsSuperAdmin &&
+            !_tenantContext.IsAdmin &&
+            !_tenantContext.IsRestaurantManager)
         {
             return Forbid();
         }
@@ -263,8 +269,7 @@ public class BranchesController : ControllerBase
         {
             return Conflict(new
             {
-                message =
-                    "Cannot delete a branch that contains tables."
+                message = "Cannot delete a branch that contains tables."
             });
         }
 
@@ -272,27 +277,13 @@ public class BranchesController : ControllerBase
         {
             return Conflict(new
             {
-                message =
-                    "Cannot delete a branch that contains orders."
+                message = "Cannot delete a branch that contains orders."
             });
         }
 
         _context.Branches.Remove(branch);
-
         await _context.SaveChangesAsync();
 
         return NoContent();
-    }
-
-    private bool CanAccessRestaurant(int restaurantId)
-    {
-        if (_tenantContext.IsAdmin)
-        {
-            return true;
-        }
-
-        return _tenantContext.IsManager &&
-               _tenantContext.RestaurantId.HasValue &&
-               _tenantContext.RestaurantId.Value == restaurantId;
     }
 }
