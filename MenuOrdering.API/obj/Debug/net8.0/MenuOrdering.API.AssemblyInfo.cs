@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MenuOrdering.API")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9f787d0f53c10beb64bc8ee67e732bbd1c91e716")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+73913521adf857ef090f8a4ed685993d6300f397")]
 [assembly: System.Reflection.AssemblyProductAttribute("MenuOrdering.API")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MenuOrdering.API")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

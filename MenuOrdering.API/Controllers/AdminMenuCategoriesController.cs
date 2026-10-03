@@ -1,7 +1,6 @@
 using MenuOrdering.API.Authorization;
 using MenuOrdering.API.Data;
 using MenuOrdering.API.DTOs.Categories;
-using MenuOrdering.API.Enums;
 using MenuOrdering.API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,14 +9,14 @@ using Microsoft.EntityFrameworkCore;
 namespace MenuOrdering.API.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/admin/menu/categories")]
 [Authorize]
-public class CategoriesController : ControllerBase
+public class AdminMenuCategoriesController : ControllerBase
 {
     private readonly MenuDbContext _context;
     private readonly TenantContext _tenantContext;
 
-    public CategoriesController(
+    public AdminMenuCategoriesController(
         MenuDbContext context,
         TenantContext tenantContext)
     {
@@ -27,28 +26,21 @@ public class CategoriesController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<CategoryResponse>>> GetCategories(
-        [FromQuery] int? restaurantId)
+        [FromQuery] int? restaurantId = null)
     {
+        var targetRestaurantId = ResolveRestaurantId(restaurantId);
+
+        if (!_tenantContext.IsSuperAdmin && !targetRestaurantId.HasValue)
+            return Forbid();
+
         var query = _context.Categories
             .AsNoTracking()
             .AsQueryable();
 
-        if (_tenantContext.IsSuperAdmin)
+        if (targetRestaurantId.HasValue)
         {
-            if (restaurantId.HasValue)
-            {
-                query = query.Where(x =>
-                    x.RestaurantId == restaurantId.Value);
-            }
-        }
-        else
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
-                return Forbid();
-
             query = query.Where(x =>
-                x.RestaurantId ==
-                _tenantContext.RestaurantId.Value);
+                x.RestaurantId == targetRestaurantId.Value);
         }
 
         var categories = await query
@@ -70,77 +62,38 @@ public class CategoriesController : ControllerBase
     {
         var category = await _context.Categories
             .AsNoTracking()
-            .Where(x => x.Id == id)
-            .Select(x => new
-            {
-                x.Id,
-                x.RestaurantId,
-                x.Name,
-                x.Description,
-                x.IsActive
-            })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(x => x.Id == id);
 
         if (category == null)
-        {
-            return NotFound(new
-            {
-                message = "Category not found."
-            });
-        }
+            return NotFound(new { message = "Category not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(category.RestaurantId))
             return Forbid();
-        }
 
-        return Ok(new CategoryResponse
-        {
-            Id = category.Id,
-            Name = category.Name,
-            Description = category.Description,
-            IsActive = category.IsActive
-        });
+        return Ok(ToResponse(category));
     }
 
     [HttpPost]
     public async Task<ActionResult<CategoryResponse>> CreateCategory(
-        CreateCategoryRequest request)
+        [FromQuery] int? restaurantId,
+        [FromBody] CreateCategoryRequest request)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
-        int restaurantId;
+        var targetRestaurantId = ResolveRestaurantId(restaurantId);
 
-        if (_tenantContext.IsSuperAdmin)
+        if (!targetRestaurantId.HasValue)
         {
-            if (!request.RestaurantId.HasValue)
+            return BadRequest(new
             {
-                return BadRequest(new
-                {
-                    message = "RestaurantId is required for SuperAdmin."
-                });
-            }
-
-            restaurantId = request.RestaurantId.Value;
-        }
-        else
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
-                return Forbid();
-
-            restaurantId =
-                _tenantContext.RestaurantId.Value;
+                message = "RestaurantId is required for SuperAdmin."
+            });
         }
 
         var restaurantExists = await _context.Restaurants
             .AnyAsync(x =>
-                x.Id == restaurantId &&
+                x.Id == targetRestaurantId.Value &&
                 x.IsActive);
 
         if (!restaurantExists)
@@ -155,7 +108,7 @@ public class CategoriesController : ControllerBase
 
         var exists = await _context.Categories
             .AnyAsync(x =>
-                x.RestaurantId == restaurantId &&
+                x.RestaurantId == targetRestaurantId.Value &&
                 x.Name == name);
 
         if (exists)
@@ -168,55 +121,38 @@ public class CategoriesController : ControllerBase
 
         var category = new Category
         {
-            RestaurantId = restaurantId,
+            RestaurantId = targetRestaurantId.Value,
             Name = name,
             Description = request.Description?.Trim(),
             IsActive = request.IsActive
         };
 
         _context.Categories.Add(category);
+
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(
             nameof(GetCategory),
             new { id = category.Id },
-            new CategoryResponse
-            {
-                Id = category.Id,
-                Name = category.Name,
-                Description = category.Description,
-                IsActive = category.IsActive
-            });
+            ToResponse(category));
     }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateCategory(
         int id,
-        UpdateCategoryRequest request)
+        [FromBody] UpdateCategoryRequest request)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
         var category = await _context.Categories
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (category == null)
-        {
-            return NotFound(new
-            {
-                message = "Category not found."
-            });
-        }
+            return NotFound(new { message = "Category not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(category.RestaurantId))
             return Forbid();
-        }
 
         var name = request.Name.Trim();
 
@@ -239,36 +175,25 @@ public class CategoriesController : ControllerBase
         category.IsActive = request.IsActive;
 
         await _context.SaveChangesAsync();
+
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteCategory(int id)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
         var category = await _context.Categories
             .Include(x => x.MenuItems)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (category == null)
-        {
-            return NotFound(new
-            {
-                message = "Category not found."
-            });
-        }
+            return NotFound(new { message = "Category not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(category.RestaurantId))
             return Forbid();
-        }
 
         if (category.MenuItems.Any())
         {
@@ -279,8 +204,35 @@ public class CategoriesController : ControllerBase
         }
 
         _context.Categories.Remove(category);
+
         await _context.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    private int? ResolveRestaurantId(int? requestedRestaurantId)
+    {
+        if (_tenantContext.IsSuperAdmin)
+            return requestedRestaurantId;
+
+        return _tenantContext.RestaurantId;
+    }
+
+    private bool CanManageMenu()
+    {
+        return _tenantContext.IsSuperAdmin ||
+               _tenantContext.IsAdmin ||
+               _tenantContext.IsRestaurantManager;
+    }
+
+    private static CategoryResponse ToResponse(Category category)
+    {
+        return new CategoryResponse
+        {
+            Id = category.Id,
+            Name = category.Name,
+            Description = category.Description,
+            IsActive = category.IsActive
+        };
     }
 }

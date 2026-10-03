@@ -9,14 +9,14 @@ using Microsoft.EntityFrameworkCore;
 namespace MenuOrdering.API.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/admin/menu/items")]
 [Authorize]
-public class MenuItemsController : ControllerBase
+public class AdminMenuItemsController : ControllerBase
 {
     private readonly MenuDbContext _context;
     private readonly TenantContext _tenantContext;
 
-    public MenuItemsController(
+    public AdminMenuItemsController(
         MenuDbContext context,
         TenantContext tenantContext)
     {
@@ -26,30 +26,47 @@ public class MenuItemsController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<MenuItemResponse>>> GetMenuItems(
-        [FromQuery] int? restaurantId)
+        [FromQuery] int? restaurantId = null,
+        [FromQuery] int? categoryId = null)
     {
-        var query = _context.MenuItems
-            .AsNoTracking()
-            .Include(x => x.Category)
-            .AsQueryable();
+        var targetRestaurantId = ResolveRestaurantId(restaurantId);
 
-        if (_tenantContext.IsSuperAdmin)
+        if (!_tenantContext.IsSuperAdmin && !targetRestaurantId.HasValue)
+            return Forbid();
+
+        if (categoryId.HasValue)
         {
-            if (restaurantId.HasValue)
-            {
-                query = query.Where(x =>
-                    x.Category.RestaurantId ==
-                    restaurantId.Value);
-            }
-        }
-        else
-        {
-            if (!_tenantContext.RestaurantId.HasValue)
+            var category = await _context.Categories
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == categoryId.Value);
+
+            if (category == null)
+                return NotFound(new { message = "Category not found." });
+
+            if (!_tenantContext.CanAccessRestaurant(category.RestaurantId))
                 return Forbid();
 
+            if (targetRestaurantId.HasValue &&
+                category.RestaurantId != targetRestaurantId.Value)
+            {
+                return Forbid();
+            }
+        }
+
+        var query = _context.MenuItems
+            .AsNoTracking()
+            .AsQueryable();
+
+        if (targetRestaurantId.HasValue)
+        {
             query = query.Where(x =>
-                x.Category.RestaurantId ==
-                _tenantContext.RestaurantId.Value);
+                x.Category.RestaurantId == targetRestaurantId.Value);
+        }
+
+        if (categoryId.HasValue)
+        {
+            query = query.Where(x =>
+                x.CategoryId == categoryId.Value);
         }
 
         var items = await query
@@ -80,81 +97,23 @@ public class MenuItemsController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (item == null)
-        {
-            return NotFound(new
-            {
-                message = "Menu item not found."
-            });
-        }
+            return NotFound(new { message = "Menu item not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                item.Category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(item.Category.RestaurantId))
             return Forbid();
-        }
 
         return Ok(ToResponse(item));
     }
 
-    [HttpGet("category/{categoryId:int}")]
-    public async Task<ActionResult<IEnumerable<MenuItemResponse>>> GetMenuItemsByCategory(
-        int categoryId)
-    {
-        var category = await _context.Categories
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == categoryId);
-
-        if (category == null)
-        {
-            return NotFound(new
-            {
-                message = "Category not found."
-            });
-        }
-
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
-            return Forbid();
-        }
-
-        var items = await _context.MenuItems
-            .AsNoTracking()
-            .Where(x =>
-                x.CategoryId == categoryId &&
-                x.IsAvailable)
-            .OrderBy(x => x.Name)
-            .Select(x => new MenuItemResponse
-            {
-                Id = x.Id,
-                CategoryId = x.CategoryId,
-                CategoryName = x.Category.Name,
-                Name = x.Name,
-                Description = x.Description,
-                Price = x.Price,
-                ImageUrl = x.ImageUrl,
-                IsAvailable = x.IsAvailable
-            })
-            .ToListAsync();
-
-        return Ok(items);
-    }
-
     [HttpPost]
     public async Task<ActionResult<MenuItemResponse>> CreateMenuItem(
-        CreateMenuItemRequest request)
+        [FromBody] CreateMenuItemRequest request)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
         var category = await _context.Categories
-            .Include(x => x.Restaurant)
-            .FirstOrDefaultAsync(x =>
-                x.Id == request.CategoryId);
+            .FirstOrDefaultAsync(x => x.Id == request.CategoryId);
 
         if (category == null)
         {
@@ -164,20 +123,8 @@ public class MenuItemsController : ControllerBase
             });
         }
 
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(category.RestaurantId))
             return Forbid();
-        }
-
-        if (!category.IsActive ||
-            !category.Restaurant.IsActive)
-        {
-            return BadRequest(new
-            {
-                message = "Cannot add an item to an inactive category or restaurant."
-            });
-        }
 
         var name = request.Name.Trim();
 
@@ -205,49 +152,39 @@ public class MenuItemsController : ControllerBase
         };
 
         _context.MenuItems.Add(item);
+
         await _context.SaveChangesAsync();
+
+        item.Category = category;
 
         return CreatedAtAction(
             nameof(GetMenuItem),
             new { id = item.Id },
-            ToResponse(item, category.Name));
+            ToResponse(item));
     }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateMenuItem(
         int id,
-        UpdateMenuItemRequest request)
+        [FromBody] UpdateMenuItemRequest request)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
         var item = await _context.MenuItems
             .Include(x => x.Category)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (item == null)
-        {
-            return NotFound(new
-            {
-                message = "Menu item not found."
-            });
-        }
+            return NotFound(new { message = "Menu item not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                item.Category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(item.Category.RestaurantId))
             return Forbid();
-        }
 
-        var category = await _context.Categories
-            .FirstOrDefaultAsync(x =>
-                x.Id == request.CategoryId);
+        var targetCategory = await _context.Categories
+            .FirstOrDefaultAsync(x => x.Id == request.CategoryId);
 
-        if (category == null)
+        if (targetCategory == null)
         {
             return BadRequest(new
             {
@@ -255,21 +192,10 @@ public class MenuItemsController : ControllerBase
             });
         }
 
-        if (!_tenantContext.CanAccessRestaurant(
-                category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(targetCategory.RestaurantId))
             return Forbid();
-        }
 
-        if (!category.IsActive)
-        {
-            return BadRequest(new
-            {
-                message = "Cannot move an item to an inactive category."
-            });
-        }
-
-        if (item.Category.RestaurantId != category.RestaurantId)
+        if (targetCategory.RestaurantId != item.Category.RestaurantId)
         {
             return BadRequest(new
             {
@@ -289,11 +215,12 @@ public class MenuItemsController : ControllerBase
         {
             return Conflict(new
             {
-                message = "Another menu item with this name already exists in this category."
+                message = "A menu item with this name already exists in this category."
             });
         }
 
         item.CategoryId = request.CategoryId;
+        item.Category = targetCategory;
         item.Name = name;
         item.Description = request.Description?.Trim();
         item.Price = request.Price;
@@ -301,52 +228,55 @@ public class MenuItemsController : ControllerBase
         item.IsAvailable = request.IsAvailable;
 
         await _context.SaveChangesAsync();
+
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteMenuItem(int id)
     {
-        if (!_tenantContext.IsSuperAdmin &&
-            !_tenantContext.IsAdmin &&
-            !_tenantContext.IsRestaurantManager)
-        {
+        if (!CanManageMenu())
             return Forbid();
-        }
 
         var item = await _context.MenuItems
             .Include(x => x.Category)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (item == null)
-        {
-            return NotFound(new
-            {
-                message = "Menu item not found."
-            });
-        }
+            return NotFound(new { message = "Menu item not found." });
 
-        if (!_tenantContext.CanAccessRestaurant(
-                item.Category.RestaurantId))
-        {
+        if (!_tenantContext.CanAccessRestaurant(item.Category.RestaurantId))
             return Forbid();
-        }
 
         _context.MenuItems.Remove(item);
+
         await _context.SaveChangesAsync();
 
         return NoContent();
     }
 
-    private static MenuItemResponse ToResponse(
-        MenuItem item,
-        string? categoryName = null)
+    private int? ResolveRestaurantId(int? requestedRestaurantId)
+    {
+        if (_tenantContext.IsSuperAdmin)
+            return requestedRestaurantId;
+
+        return _tenantContext.RestaurantId;
+    }
+
+    private bool CanManageMenu()
+    {
+        return _tenantContext.IsSuperAdmin ||
+               _tenantContext.IsAdmin ||
+               _tenantContext.IsRestaurantManager;
+    }
+
+    private static MenuItemResponse ToResponse(MenuItem item)
     {
         return new MenuItemResponse
         {
             Id = item.Id,
             CategoryId = item.CategoryId,
-            CategoryName = categoryName ?? item.Category.Name,
+            CategoryName = item.Category?.Name ?? string.Empty,
             Name = item.Name,
             Description = item.Description,
             Price = item.Price,

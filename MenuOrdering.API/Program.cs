@@ -11,6 +11,21 @@ var builder = WebApplication.CreateBuilder(args);
 // Controllers
 builder.Services.AddControllers();
 
+// CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy
+            .WithOrigins(
+                "http://localhost:5173",
+                "http://127.0.0.1:5173"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // Database
 builder.Services.AddDbContext<MenuDbContext>(options =>
     options.UseSqlServer(
@@ -117,8 +132,14 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// CORS MUST be before authentication/authorization
+app.UseCors("Frontend");
+
 // HTTPS
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 // Authentication MUST come before Authorization
 app.UseAuthentication();
